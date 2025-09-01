@@ -132,3 +132,93 @@ module.exports = {
         }
     },
 };
+module.exports = {
+    name: 'done',
+    description: 'Saves the ticket transcript and deletes the ticket channel.',
+    usage: '$done',
+    category: 'ticket',
+    staffOnly: true,
+    async execute(message, args, client) {
+        const { channel, guild, member } = message;
+
+        // Same ticket detection as transcript
+        if (!channel.isThread() || channel.parentId !== ticketPanelChannelId) {
+            return message.reply({ content: "This command can only be used inside a ticket.", ephemeral: true });
+        }
+
+        if (!member.permissions.has(PermissionsBitField.Flags.ManageThreads)) {
+            return message.reply({ content: "You don't have permission to perform this action.", ephemeral: true });
+        }
+
+        const savingEmbed = new EmbedBuilder()
+            .setColor('#000000')
+            .setDescription("Saving transcript before closing ticket...");
+        const replyMessage = await message.reply({ embeds: [savingEmbed] });
+
+        try {
+            // Generate transcript file
+            const transcriptFilename = `${channel.name.toLowerCase().replace(/[^a-z0-9]/gi, '_')}.html`;
+            const fileAttachment = await createTranscript(channel, {
+                returnType: 'attachment',
+                filename: transcriptFilename,
+                saveImages: true,
+                poweredBy: false,
+            });
+
+            // Fetch ticketOwnerId and otherTraderId from ticket embed
+            const { ticketOwnerId, otherTraderId } = await parseUsersFromTicketEmbed(channel, client);
+
+            // Fetch log channel
+            let logChannel = guild.channels.cache.get(transcriptLogChannelId);
+            if (!logChannel) logChannel = await guild.channels.fetch(transcriptLogChannelId).catch(() => null);
+            if (!logChannel) {
+                return replyMessage.edit({ content: "❌ Transcript log channel not found. Cannot save transcript.", embeds: [] });
+            }
+
+            // Create embed identical to transcript command
+            const transcriptInfoEmbed = new EmbedBuilder()
+                .setColor('#000000')
+                .setTitle(`${channel.name} Transcript`)
+                .addFields(
+                    { name: 'Ticket Owner', value: ticketOwnerId ? `<@${ticketOwnerId}> (\`${ticketOwnerId}\`)` : 'Unknown', inline: true },
+                    { name: 'Ticket Name', value: `\`${channel.name}\``, inline: true },
+                    { name: 'Ticket ID', value: `\`${channel.id}\``, inline: true },
+                    { name: 'Logged By', value: `${message.author.tag} (<@${message.author.id}>)`, inline: false }
+                )
+                .setTimestamp();
+
+            const logMessageSent = await logChannel.send({
+                embeds: [transcriptInfoEmbed],
+                files: [fileAttachment],
+            });
+
+            // Add view button like transcript command
+            if (logMessageSent && logMessageSent.attachments.size > 0) {
+                const transcriptViewerUrl = `https://d4l.info/chat-exporter?url=${logMessageSent.attachments.first()?.url || "#"}`;
+                const viewButton = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setLabel(transcriptFilename)
+                        .setURL(transcriptViewerUrl)
+                        .setStyle(ButtonStyle.Link)
+                );
+                await logMessageSent.edit({ components: [viewButton] });
+            }
+
+            // Confirmation before deletion
+            if (replyMessage.editable) {
+                await replyMessage.edit({ content: `Transcript saved in ${logChannel}! Closing ticket...`, embeds: [] });
+            }
+
+            // Delete ticket
+            await channel.delete('Ticket marked as done and transcript saved.');
+
+        } catch (err) {
+            console.error("[DoneCmd] Error saving transcript or deleting ticket:", err);
+            if (replyMessage.editable) {
+                await replyMessage.edit({ content: "An error occurred while closing the ticket. Check logs.", embeds: [] });
+            } else {
+                message.channel.send("An error occurred while closing the ticket. Check logs.");
+            }
+        }
+    },
+};

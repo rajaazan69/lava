@@ -1,7 +1,7 @@
 
 const { PermissionsBitField, EmbedBuilder } = require('discord.js');
 const { ticketPanelChannelId } = require('../../config.json');
-const { parseUsersFromTicketEmbed } = require('../../utils/ticketUtils'); 
+const { parseUsersFromTicketEmbed } = require('../../utils/ticketutils'); 
 
 module.exports = {
     name: 'format',
